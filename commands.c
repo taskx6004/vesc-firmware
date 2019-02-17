@@ -22,6 +22,7 @@
 #include "hal.h"
 #include "mc_interface.h"
 #include "stm32f4xx_conf.h"
+#include "servo.h"
 #include "servo_simple.h"
 #include "buffer.h"
 #include "terminal.h"
@@ -180,8 +181,6 @@ void commands_process_packet(unsigned char *data, unsigned int len) {
 		buffer_append_int32(send_buffer, mc_interface_get_tachometer_value(false), &ind);
 		buffer_append_int32(send_buffer, mc_interface_get_tachometer_abs_value(false), &ind);
 		send_buffer[ind++] = mc_interface_get_fault();
-		buffer_append_float32(send_buffer, mc_interface_get_pid_pos_now(), 1e6, &ind);
-		send_buffer[ind++] = app_get_configuration()->controller_id;
 		commands_send_packet(send_buffer, ind);
 		break;
 
@@ -195,6 +194,18 @@ void commands_process_packet(unsigned char *data, unsigned int len) {
 		ind = 0;
 		mc_interface_set_current((float)buffer_get_int32(data, &ind) / 1000.0);
 		timeout_reset();
+		break;
+
+	case COMM_SET_CURRENT_GET_POSITION:
+		ind = 0;
+		mc_interface_set_current((float)buffer_get_int32(data, &ind) / 1000.0);
+		timeout_reset();
+		ind = 0;
+		send_buffer[ind++] = COMM_ROTOR_POSITION_CUMULATIVE;
+		buffer_append_int32(send_buffer, encoder_cumulative_counts(), &ind);
+		//buffer_append_float32(send_buffer, mc_interface_get_rpm(), 1e0, &ind);
+		//send_buffer[ind++] = mc_interface_get_fault();
+		commands_send_packet(send_buffer, ind);
 		break;
 
 	case COMM_SET_CURRENT_BRAKE:
@@ -211,9 +222,25 @@ void commands_process_packet(unsigned char *data, unsigned int len) {
 
 	case COMM_SET_POS:
 		ind = 0;
-		mc_interface_set_pid_pos((float)buffer_get_int32(data, &ind) / 1000000.0);
+		mc_interface_set_pid_pos((float)buffer_get_int32(data, &ind) / 1000000.0, 0);
 		timeout_reset();
 		break;
+    
+	case COMM_SET_POS_CUMULATIVE:
+		ind = 0;
+    float pos = ((float)buffer_get_int32(data, &ind) / 100000.0); // get position		    
+    float rpm = ((float)buffer_get_int32(data, &ind)); // get rpm parameter 
+    //commands_printf("pos=%.0f, rpm=%.0f", pos, rpm);
+    /*if (rpm > 0.1){
+      mcconf = *mc_interface_get_configuration(); // read current config
+      mcconf.l_max_erpm = rpm; // change erpm parameter 
+      update_override_limits(&mcconf); // update changed limits
+      mcpwm_foc_set_configuration(&mcconf); // apply changed config          
+    }*/
+    mc_interface_set_pid_pos(pos, rpm); // set position control set-point    
+    
+		timeout_reset();
+		break;       
 
 	case COMM_SET_HANDBRAKE:
 		ind = 0;
@@ -241,7 +268,11 @@ void commands_process_packet(unsigned char *data, unsigned int len) {
 	case COMM_SET_SERVO_POS:
 #if SERVO_OUT_ENABLE
 		ind = 0;
+#if SERVO_OUT_SIMPLE
 		servo_simple_set_output(buffer_get_float16(data, 1000.0, &ind));
+#else
+		servos[0].pos = (int16_t)(buffer_get_float16(data, 1000.0, &ind) * 255.0);
+#endif
 #endif
 		break;
 
@@ -319,7 +350,7 @@ void commands_process_packet(unsigned char *data, unsigned int len) {
 		mcconf.foc_sl_openloop_hyst = buffer_get_float32_auto(data, &ind);
 		mcconf.foc_sl_openloop_time = buffer_get_float32_auto(data, &ind);
 		mcconf.foc_sl_d_current_duty = buffer_get_float32_auto(data, &ind);
-		mcconf.foc_sl_d_current_factor = buffer_get_float32_auto(data, &ind);
+ 		mcconf.foc_sl_d_current_factor = buffer_get_float32_auto(data, &ind);
 		memcpy(mcconf.foc_hall_table, data + ind, 8);
 		ind += 8;
 		mcconf.foc_sl_erpm = buffer_get_float32_auto(data, &ind);
@@ -328,19 +359,16 @@ void commands_process_packet(unsigned char *data, unsigned int len) {
 		mcconf.foc_sat_comp = buffer_get_float32_auto(data, &ind);
 		mcconf.foc_temp_comp = data[ind++];
 		mcconf.foc_temp_comp_base_temp = buffer_get_float32_auto(data, &ind);
-		mcconf.foc_current_filter_const = buffer_get_float32_auto(data, &ind);
 
 		mcconf.s_pid_kp = buffer_get_float32_auto(data, &ind);
 		mcconf.s_pid_ki = buffer_get_float32_auto(data, &ind);
 		mcconf.s_pid_kd = buffer_get_float32_auto(data, &ind);
-		mcconf.s_pid_kd_filter = buffer_get_float32_auto(data, &ind);
 		mcconf.s_pid_min_erpm = buffer_get_float32_auto(data, &ind);
 		mcconf.s_pid_allow_braking = data[ind++];
 
 		mcconf.p_pid_kp = buffer_get_float32_auto(data, &ind);
 		mcconf.p_pid_ki = buffer_get_float32_auto(data, &ind);
 		mcconf.p_pid_kd = buffer_get_float32_auto(data, &ind);
-		mcconf.p_pid_kd_filter = buffer_get_float32_auto(data, &ind);
 		mcconf.p_pid_ang_div = buffer_get_float32_auto(data, &ind);
 
 		mcconf.cc_startup_boost_duty = buffer_get_float32_auto(data, &ind);
@@ -360,7 +388,6 @@ void commands_process_packet(unsigned char *data, unsigned int len) {
 		mcconf.m_bldc_f_sw_max = buffer_get_float32_auto(data, &ind);
 		mcconf.m_dc_f_sw = buffer_get_float32_auto(data, &ind);
 		mcconf.m_ntc_motor_beta = buffer_get_float32_auto(data, &ind);
-		mcconf.m_out_aux_mode = data[ind++];
 
 		// Apply limits if they are defined
 #ifndef DISABLE_HW_LIMITS
@@ -487,19 +514,16 @@ void commands_process_packet(unsigned char *data, unsigned int len) {
 		buffer_append_float32_auto(send_buffer, mcconf.foc_sat_comp, &ind);
 		send_buffer[ind++] = mcconf.foc_temp_comp;
 		buffer_append_float32_auto(send_buffer, mcconf.foc_temp_comp_base_temp, &ind);
-		buffer_append_float32_auto(send_buffer, mcconf.foc_current_filter_const, &ind);
 
 		buffer_append_float32_auto(send_buffer, mcconf.s_pid_kp, &ind);
 		buffer_append_float32_auto(send_buffer, mcconf.s_pid_ki, &ind);
 		buffer_append_float32_auto(send_buffer, mcconf.s_pid_kd, &ind);
-		buffer_append_float32_auto(send_buffer, mcconf.s_pid_kd_filter, &ind);
 		buffer_append_float32_auto(send_buffer, mcconf.s_pid_min_erpm, &ind);
 		send_buffer[ind++] = mcconf.s_pid_allow_braking;
 
 		buffer_append_float32_auto(send_buffer, mcconf.p_pid_kp, &ind);
 		buffer_append_float32_auto(send_buffer, mcconf.p_pid_ki, &ind);
 		buffer_append_float32_auto(send_buffer, mcconf.p_pid_kd, &ind);
-		buffer_append_float32_auto(send_buffer, mcconf.p_pid_kd_filter, &ind);
 		buffer_append_float32_auto(send_buffer, mcconf.p_pid_ang_div, &ind);
 
 		buffer_append_float32_auto(send_buffer, mcconf.cc_startup_boost_duty, &ind);
@@ -519,7 +543,6 @@ void commands_process_packet(unsigned char *data, unsigned int len) {
 		buffer_append_float32_auto(send_buffer, mcconf.m_bldc_f_sw_max, &ind);
 		buffer_append_float32_auto(send_buffer, mcconf.m_dc_f_sw, &ind);
 		buffer_append_float32_auto(send_buffer, mcconf.m_ntc_motor_beta, &ind);
-		send_buffer[ind++] = mcconf.m_out_aux_mode;
 
 		commands_send_packet(send_buffer, ind);
 		break;
@@ -885,6 +908,16 @@ void commands_send_rotor_pos(float rotor_pos) {
 
 	buffer[index++] = COMM_ROTOR_POSITION;
 	buffer_append_int32(buffer, (int32_t)(rotor_pos * 100000.0), &index);
+
+	commands_send_packet(buffer, index);
+}
+
+void commands_send_rotor_pos_counts(int32_t rotor_pos) {
+	uint8_t buffer[5];
+	int32_t index = 0;
+
+	buffer[index++] = COMM_ROTOR_POSITION_CUMULATIVE;
+	buffer_append_int32(buffer, (int32_t)(rotor_pos), &index);
 
 	commands_send_packet(buffer, index);
 }

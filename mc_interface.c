@@ -1,5 +1,5 @@
 /*
-	Copyright 2016 - 2018 Benjamin Vedder	benjamin@vedder.se
+	Copyright 2016 - 2017 Benjamin Vedder	benjamin@vedder.se
 
 	This file is part of the VESC firmware.
 
@@ -30,7 +30,6 @@
 #include "commands.h"
 #include "encoder.h"
 #include "drv8301.h"
-#include "drv8320.h"
 #include "buffer.h"
 #include <math.h>
 
@@ -85,7 +84,7 @@ static volatile int m_sample_trigger;
 static volatile float m_last_adc_duration_sample;
 
 // Private functions
-static void update_override_limits(volatile mc_configuration *conf);
+//static void update_override_limits(volatile mc_configuration *conf);
 
 // Function pointers
 static void(*pwn_done_func)(void) = 0;
@@ -135,9 +134,6 @@ void mc_interface_init(mc_configuration *configuration) {
 #ifdef HW_HAS_DRV8301
 	drv8301_set_oc_mode(configuration->m_drv8301_oc_mode);
 	drv8301_set_oc_adj(configuration->m_drv8301_oc_adj);
-#elif defined(HW_HAS_DRV8320)
-	drv8320_set_oc_mode(configuration->m_drv8301_oc_mode);
-	drv8320_set_oc_adj(configuration->m_drv8301_oc_adj);
 #endif
 
 	// Initialize encoder
@@ -202,9 +198,6 @@ void mc_interface_set_configuration(mc_configuration *configuration) {
 #ifdef HW_HAS_DRV8301
 	drv8301_set_oc_mode(configuration->m_drv8301_oc_mode);
 	drv8301_set_oc_adj(configuration->m_drv8301_oc_adj);
-#elif defined(HW_HAS_DRV8320)
-	drv8320_set_oc_mode(configuration->m_drv8301_oc_mode);
-	drv8320_set_oc_adj(configuration->m_drv8301_oc_adj);
 #endif
 
 	if (m_conf.motor_type == MOTOR_TYPE_FOC
@@ -384,24 +377,21 @@ void mc_interface_set_pid_speed(float rpm) {
 	}
 }
 
-void mc_interface_set_pid_pos(float pos) {
+void mc_interface_set_pid_pos(float pos, float rpm) {
 	if (mc_interface_try_input()) {
 		return;
 	}
 
 	m_position_set = pos;
 
-	pos *= DIR_MULT;
-	utils_norm_angle(&pos);
-
 	switch (m_conf.motor_type) {
 	case MOTOR_TYPE_BLDC:
 	case MOTOR_TYPE_DC:
-		mcpwm_set_pid_pos(pos);
+		mcpwm_set_pid_pos(DIR_MULT * m_position_set, rpm);
 		break;
 
 	case MOTOR_TYPE_FOC:
-		mcpwm_foc_set_pid_pos(pos);
+		mcpwm_foc_set_pid_pos(DIR_MULT * m_position_set, rpm);
 		break;
 
 	default:
@@ -473,12 +463,6 @@ void mc_interface_set_brake_current_rel(float val) {
 	mc_interface_set_brake_current(val * m_conf.lo_current_motor_max_now);
 }
 
-/**
- * Set open loop current vector to brake motor.
- *
- * @param current
- * The current value.
- */
 void mc_interface_set_handbrake(float current) {
 	if (mc_interface_try_input()) {
 		return;
@@ -498,16 +482,6 @@ void mc_interface_set_handbrake(float current) {
 	default:
 		break;
 	}
-}
-
-/**
- * Set handbrake brake current relative to the minimum current limit.
- *
- * @param current
- * The relative current value, range [0.0 1.0]
- */
-void mc_interface_set_handbrake_rel(float val) {
-	mc_interface_set_handbrake(val * fabsf(m_conf.lo_current_motor_min_now));
 }
 
 void mc_interface_brake_now(void) {
@@ -921,10 +895,7 @@ float mc_interface_get_pid_pos_now(void) {
 		break;
 	}
 
-	ret *= DIR_MULT;
-	utils_norm_angle(&ret);
-
-	return ret;
+	return DIR_MULT * ret;
 }
 
 float mc_interface_get_last_sample_adc_isr_duration(void) {
@@ -1049,10 +1020,6 @@ void mc_interface_fault_stop(mc_fault_code fault) {
 #ifdef HW_HAS_DRV8301
 		if (fault == FAULT_CODE_DRV) {
 			fdata.drv8301_faults = drv8301_read_faults();
-		}
-#elif defined(HW_HAS_DRV8320)
-		if (fault == FAULT_CODE_DRV) {
-			fdata.drv8301_faults = drv8320_read_faults();
 		}
 #endif
 		terminal_add_fault_data(&fdata);
@@ -1331,7 +1298,7 @@ void mc_interface_adc_inj_int_handler(void) {
  * @param conf
  * The configaration to update.
  */
-static void update_override_limits(volatile mc_configuration *conf) {
+void update_override_limits(volatile mc_configuration *conf) {
 	const float v_in = GET_INPUT_VOLTAGE();
 	const float rpm_now = mc_interface_get_rpm();
 
@@ -1339,10 +1306,11 @@ static void update_override_limits(volatile mc_configuration *conf) {
 	UTILS_LP_FAST(m_temp_motor, NTC_TEMP_MOTOR(conf->m_ntc_motor_beta), 0.1);
 
 	// Temperature MOSFET
-	float lo_min_mos = conf->l_current_min;
-	float lo_max_mos = conf->l_current_max;
+	float lo_max_mos = 0.0;
+	float lo_min_mos = 0.0;
 	if (m_temp_fet < conf->l_temp_fet_start) {
-		// Keep values
+		lo_min_mos = conf->l_current_min;
+		lo_max_mos = conf->l_current_max;
 	} else if (m_temp_fet > conf->l_temp_fet_end) {
 		lo_min_mos = 0.0;
 		lo_max_mos = 0.0;
@@ -1355,20 +1323,21 @@ static void update_override_limits(volatile mc_configuration *conf) {
 
 		maxc = utils_map(m_temp_fet, conf->l_temp_fet_start, conf->l_temp_fet_end, maxc, 0.0);
 
-		if (fabsf(conf->l_current_min) > maxc) {
-			lo_min_mos = SIGN(conf->l_current_min) * maxc;
-		}
-
 		if (fabsf(conf->l_current_max) > maxc) {
 			lo_max_mos = SIGN(conf->l_current_max) * maxc;
+		}
+
+		if (fabsf(conf->l_current_min) > maxc) {
+			lo_min_mos = SIGN(conf->l_current_min) * maxc;
 		}
 	}
 
 	// Temperature MOTOR
-	float lo_min_mot = conf->l_current_min;
-	float lo_max_mot = conf->l_current_max;
+	float lo_max_mot = 0.0;
+	float lo_min_mot = 0.0;
 	if (m_temp_motor < conf->l_temp_motor_start) {
-		// Keep values
+		lo_min_mot = conf->l_current_min;
+		lo_max_mot = conf->l_current_max;
 	} else if (m_temp_motor > conf->l_temp_motor_end) {
 		lo_min_mot = 0.0;
 		lo_max_mot = 0.0;
@@ -1381,12 +1350,12 @@ static void update_override_limits(volatile mc_configuration *conf) {
 
 		maxc = utils_map(m_temp_motor, conf->l_temp_motor_start, conf->l_temp_motor_end, maxc, 0.0);
 
-		if (fabsf(conf->l_current_min) > maxc) {
-			lo_min_mot = SIGN(conf->l_current_min) * maxc;
-		}
-
 		if (fabsf(conf->l_current_max) > maxc) {
 			lo_max_mot = SIGN(conf->l_current_max) * maxc;
+		}
+
+		if (fabsf(conf->l_current_min) > maxc) {
+			lo_min_mot = SIGN(conf->l_current_min) * maxc;
 		}
 	}
 
@@ -1519,34 +1488,6 @@ static THD_FUNCTION(timer_thread, arg) {
 		}
 
 		update_override_limits(&m_conf);
-
-		// Update auxiliary output
-		switch (m_conf.m_out_aux_mode) {
-			case OUT_AUX_MODE_OFF:
-				AUX_OFF();
-				break;
-
-			case OUT_AUX_MODE_ON_AFTER_2S:
-				if (chVTGetSystemTimeX() >= MS2ST(2000)) {
-					AUX_ON();
-				}
-				break;
-
-			case OUT_AUX_MODE_ON_AFTER_5S:
-				if (chVTGetSystemTimeX() >= MS2ST(5000)) {
-					AUX_ON();
-				}
-				break;
-
-			case OUT_AUX_MODE_ON_AFTER_10S:
-				if (chVTGetSystemTimeX() >= MS2ST(10000)) {
-					AUX_ON();
-				}
-				break;
-
-			default:
-				break;
-		}
 
 		chThdSleepMilliseconds(1);
 	}

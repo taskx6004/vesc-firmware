@@ -35,7 +35,7 @@ void mcpwm_foc_stop_pwm(void);
 void mcpwm_foc_set_duty(float dutyCycle);
 void mcpwm_foc_set_duty_noramp(float dutyCycle);
 void mcpwm_foc_set_pid_speed(float rpm);
-void mcpwm_foc_set_pid_pos(float pos);
+void mcpwm_foc_set_pid_pos(float pos, float rpm);
 void mcpwm_foc_set_current(float current);
 void mcpwm_foc_set_brake_current(float current);
 void mcpwm_foc_set_handbrake(float current);
@@ -80,6 +80,7 @@ void mcpwm_foc_adc_int_handler(void *p, uint32_t flags);
 // Defines
 #define MCPWM_FOC_INDUCTANCE_SAMPLE_CNT_OFFSET		10 // Offset for the inductance measurement sample time in timer ticks
 #define MCPWM_FOC_INDUCTANCE_SAMPLE_RISE_COMP		50 // Current rise time compensation
+#define MCPWM_FOC_I_FILTER_CONST					0.1 // Filter constant for the current filters
 #define MCPWM_FOC_CURRENT_SAMP_OFFSET				(2) // Offset from timer top for injected ADC samples
 
 #endif /* MCPWM_FOC_H_ */

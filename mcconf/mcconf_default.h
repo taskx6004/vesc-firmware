@@ -22,7 +22,7 @@
 
 // Default settings
 #ifndef MCCONF_DEFAULT_MOTOR_TYPE
-#define MCCONF_DEFAULT_MOTOR_TYPE		MOTOR_TYPE_BLDC
+#define MCCONF_DEFAULT_MOTOR_TYPE		MOTOR_TYPE_FOC
 #endif
 #ifndef MCCONF_PWM_MODE
 #define MCCONF_PWM_MODE					PWM_MODE_SYNCHRONOUS // Default PWM mode
@@ -118,9 +118,6 @@
 #ifndef MCCONF_S_PID_KD
 #define MCCONF_S_PID_KD					0.0001	// Derivative gain
 #endif
-#ifndef MCCONF_S_PID_KD_FILTER
-#define MCCONF_S_PID_KD_FILTER			0.2	// Derivative filter
-#endif
 #ifndef MCCONF_S_PID_MIN_RPM
 #define MCCONF_S_PID_MIN_RPM			900.0	// Minimum allowed RPM
 #endif
@@ -137,9 +134,6 @@
 #endif
 #ifndef MCCONF_P_PID_KD
 #define MCCONF_P_PID_KD					0.0004	// Derivative gain
-#endif
-#ifndef MCCONF_P_PID_KD_FILTER
-#define MCCONF_P_PID_KD_FILTER			0.2		// Derivative filter
 #endif
 #ifndef MCCONF_P_PID_ANG_DIV
 #define MCCONF_P_PID_ANG_DIV			1.0		// Divide angle by this value
@@ -234,7 +228,7 @@
 #define MCCONF_FOC_ENCODER_RATIO		7.0
 #endif
 #ifndef MCCONF_FOC_SENSOR_MODE
-#define MCCONF_FOC_SENSOR_MODE			FOC_SENSOR_MODE_SENSORLESS
+#define MCCONF_FOC_SENSOR_MODE			FOC_SENSOR_MODE_ENCODER
 #endif
 #ifndef MCCONF_FOC_PLL_KP
 #define MCCONF_FOC_PLL_KP				2000.0
@@ -320,9 +314,6 @@
 #ifndef MCCONF_FOC_TEMP_COMP_BASE_TEMP
 #define MCCONF_FOC_TEMP_COMP_BASE_TEMP	25.0	// Motor temperature compensation base temperature
 #endif
-#ifndef MCCONF_FOC_CURRENT_FILTER_CONST
-#define MCCONF_FOC_CURRENT_FILTER_CONST	0.1		// Filter constant for the filtered currents
-#endif
 
 // Misc
 #ifndef MCCONF_M_FAULT_STOP_TIME
@@ -338,7 +329,7 @@
 #define MCCONF_M_ENCODER_COUNTS			8192	// The number of encoder counts
 #endif
 #ifndef MCCONF_M_SENSOR_PORT_MODE
-#define MCCONF_M_SENSOR_PORT_MODE		SENSOR_PORT_MODE_HALL // The mode of the hall_encoder port
+#define MCCONF_M_SENSOR_PORT_MODE		SENSOR_PORT_MODE_AS5047_SPI // The mode of the hall_encoder port
 #endif
 #ifndef MCCONF_M_INVERT_DIRECTION
 #define MCCONF_M_INVERT_DIRECTION		false // Invert the motor direction
@@ -360,9 +351,6 @@
 #endif
 #ifndef MCCONF_M_NTC_MOTOR_BETA
 #define MCCONF_M_NTC_MOTOR_BETA			3380.0 // Beta value for motor termistor
-#endif
-#ifndef MCCONF_M_OUT_AUX_MODE
-#define MCCONF_M_OUT_AUX_MODE			OUT_AUX_MODE_OFF // Auxiliary output mode
 #endif
 
 #endif /* MCCONF_DEFAULT_H_ */
